@@ -140,8 +140,8 @@ with st.sidebar:
         st.info("Upload a file to begin. A minimal example is shown below.")
         example = pd.DataFrame({
             "date": pd.date_range("2022-01-01", periods=48, freq="MS"),
-            "channel": np.random.choice(["corp", "retail", "dealer"], size=48),
-            "metric": "AGA",
+            "channel": np.random.choice(["CHANNEL A", "CHANNEL B", "CHANNEL C"], size=48),
+            "metric": "SALES",
             "value": np.random.randint(100, 1000, size=48)
         })
         st.dataframe(example.head(12))
