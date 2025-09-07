@@ -9,13 +9,14 @@ st.set_page_config(page_title="Scenario Planner (m/m + y/y Weighted)", layout="w
 st.title("Scenario Planner — Weighted m/m & y/y (12‑month Forecast)")
 st.write(
     """
-Upload a **long-format** dataset with a date column, one **value** column, and one or more **dimension** columns (plus an optional metric column).
-This app forecasts the next **12 months** for each (dimension[, metric]) group using a weighted blend of:
+Upload a long-format dataset with a date column, one value column, and one or more dimension columns (plus an optional metric column). This app forecasts the next 12 months for each (dimension[, metric]) group using a weighted blend of:
 
-- **m/m seasonal factor**: average of the last 3 years' month-to-month ratio for the same calendar transition.
-- **y/y momentum**: average of the **last 3 months** year-over-year ratios (using actual + forecasted values), applied to the value from the same month **one year prior**.
+m/m seasonal factor: average of the last X years' month-to-month ratio for the same calendar transition.
 
-The baseline forecast is `weight_mm * m/m_projection + weight_yoy * y/y_projection`. Then we produce **-5%** and **+5%** scenarios around baseline.
+y/y momentum: average of the last Y months' year-over-year ratios (using actual + forecasted values), applied to the value from the same month one year prior.
+
+
+The baseline forecast is weight_mm * m/m_projection + weight_yoy * y/y_projection. Then we produce -5% and +5% scenarios around baseline.
 """
 )
 
@@ -28,13 +29,12 @@ def normalize_dates(df: pd.DataFrame, date_col: str) -> pd.DataFrame:
     df[date_col] = pd.to_datetime(df[date_col], errors="coerce")
     if df[date_col].isna().any():
         st.warning("Some dates could not be parsed and were dropped.")
-    df = df.dropna(subset=[date_col])
+        df = df.dropna(subset=[date_col])
     df[date_col] = df[date_col].dt.to_period("M").dt.to_timestamp("M")
     return df
 
-
-def last_three_months_yoy_avg(values_period: pd.Series, last_period: pd.Period, debug_log: list, forecast_month: pd.Period) -> float:
-    months = [last_period - i for i in range(0, 3)]
+def last_yoy_avg(values_period: pd.Series, last_period: pd.Period, debug_log: list, forecast_month: pd.Period, periods: int) -> float:
+    months = [last_period - i for i in range(0, periods)]
     ratios = []
     for m in months:
         prev_year = m - 12
@@ -48,10 +48,9 @@ def last_three_months_yoy_avg(values_period: pd.Series, last_period: pd.Period, 
         return np.nan
     return float(np.mean(ratios))
 
-
-def seasonal_mm_avg_for_target(values_period: pd.Series, target_period: pd.Period, debug_log: list) -> float:
+def seasonal_mm_avg(values_period: pd.Series, target_period: pd.Period, debug_log: list, periods: int) -> float:
     pairs = []
-    for k in range(1, 4):
+    for k in range(1, periods + 1):
         this_year = target_period - 12 * k
         prev_month = this_year - 1
         if this_year in values_period.index and prev_month in values_period.index:
@@ -64,9 +63,7 @@ def seasonal_mm_avg_for_target(values_period: pd.Series, target_period: pd.Perio
         return np.nan
     return float(np.mean(pairs))
 
-
-def compute_group_forecast(group_df: pd.DataFrame, date_col: str, value_col: str, horizon: int,
-                           w_mm: float, w_yoy: float, debug: bool=False):
+def compute_group_forecast(group_df: pd.DataFrame, date_col: str, value_col: str, horizon: int, w_mm: float, w_yoy: float, yoy_periods: int, mm_periods: int, debug: bool=False):
     g = group_df[[date_col, value_col]].dropna().copy()
     g = g.sort_values(date_col)
 
@@ -86,9 +83,10 @@ def compute_group_forecast(group_df: pd.DataFrame, date_col: str, value_col: str
     for h in range(1, horizon + 1):
         t = last_actual + h
 
-        yoy_avg = last_three_months_yoy_avg(values, t - 1, debug_log, t)
+        # Pass the new 'periods' arguments to the helper functions
+        yoy_avg = last_yoy_avg(values, t - 1, debug_log, t, periods=yoy_periods)
+        mm_ratio = seasonal_mm_avg(values, t, debug_log, periods=mm_periods)
 
-        mm_ratio = seasonal_mm_avg_for_target(values, t, debug_log)
         mm_proj = np.nan
         prev_period = t - 1
         if pd.notna(mm_ratio) and prev_period in values.index:
@@ -133,50 +131,76 @@ def compute_group_forecast(group_df: pd.DataFrame, date_col: str, value_col: str
 # =====================
 # Sidebar — Inputs
 # =====================
+
 with st.sidebar:
     st.header("1) Upload your data")
     file = st.file_uploader("CSV or Excel (long format)", type=["csv", "xlsx", "xls"])
-    
+
+    if file is None:
+        st.info("Upload a file to begin. A minimal example is shown below.")
+        example = pd.DataFrame({
+            "date": pd.date_range("2022-01-01", periods=48, freq="MS"),
+            "channel": np.random.choice(["corp", "retail", "dealer"], size=48),
+            "metric": "AGA",
+            "value": np.random.randint(100, 1000, size=48)
+        })
+        st.dataframe(example.head(12))
+        st.stop()
+
+    try:
+        if file.name.endswith("csv"):
+            df = pd.read_csv(file)
+        else:
+            df = pd.read_excel(file)
+        columns = df.columns.tolist()
+    except Exception as e:
+        st.error(f"Failed to read file: {e}")
+        st.stop()
+
     st.header("2) Select columns")
-    date_col = st.text_input("Date column name", value="date")
-    value_col = st.text_input("Value column name", value="value")
+    date_col = st.selectbox(
+        "Date column name",
+        options=columns,
+        index=columns.index('date') if 'date' in columns else 0
+    )
+    value_col = st.selectbox(
+        "Value column name",
+        options=columns,
+        index=columns.index('value') if 'value' in columns else 0
+    )
+
     metric_col = st.text_input("Metric column (optional)", value="metric")
     dims_raw = st.text_input("Dimension columns (comma-separated)", value="channel")
     horizon = st.number_input("Forecast horizon (months)", min_value=1, max_value=24, value=12)
 
-    st.header("3) Weights (per group)")
+    st.header("3) Weights & Periods")
     st.caption("Weights must sum to 1. Defaults to 0.5 / 0.5.")
     default_w_mm = st.number_input("Default weight — m/m", min_value=0.0, max_value=1.0, value=0.5, step=0.05)
     default_w_yoy = 1.0 - default_w_mm
     st.write(f"Default weight — y/y: **{default_w_yoy:.2f}**")
+
+    # User inputs for forecast periods
+    yoy_periods = st.number_input(
+        "Number of months for y/y average",
+        min_value=1,
+        value=3,
+        help="Number of months to average for the y/y momentum ratio."
+    )
+    mm_periods = st.number_input(
+        "Number of years for m/m average",
+        min_value=1,
+        value=3,
+        help="Number of years to average for the m/m seasonal ratio."
+    )
 
     st.header("4) Scenarios")
     st.caption("Scenarios are computed off baseline: -5% and +5%.")
 
     debug_mode = st.checkbox("Enable debug panel (show calculation steps)")
 
-if file is None:
-    st.info("Upload a file to begin. A minimal example is shown below.")
-    example = pd.DataFrame({
-        "date": pd.date_range("2022-01-01", periods=48, freq="MS"),
-        "channel": np.random.choice(["CHANNEL A", "CHANNEL B", "CHANNEL C"], size=48),
-        "metric": "SALES",
-        "value": np.random.randint(100, 1000, size=48)
-    })
-    st.dataframe(example.head(12))
-    st.stop()
-
-try:
-    if file.name.endswith("csv"):
-        df = pd.read_csv(file)
-    else:
-        df = pd.read_excel(file)
-except Exception as e:
-    st.error(f"Failed to read file: {e}")
-    st.stop()
 
 if date_col not in df.columns or value_col not in df.columns:
-    st.error("Date and value columns must exist in file.")
+    st.error("Selected date and value columns must exist in file.")
     st.stop()
 
 dim_cols = [c.strip() for c in dims_raw.split(",") if c.strip()]
@@ -201,8 +225,8 @@ col_a, col_b = st.columns([2, 1])
 with col_a:
     st.dataframe(_df.head(20))
 with col_b:
-    st.write("**Rows:**", len(_df))
-    st.write("**Date range:**", str(_df[date_col].min().date()) , "→", str(_df[date_col].max().date()))
+    st.write("Rows:", len(_df))
+    st.write("Date range:", str(_df[date_col].min().date()) , "→", str(_df[date_col].max().date()))
 
 st.subheader("Per-group weight overrides (optional)")
 unique_groups = _df[group_cols].drop_duplicates().reset_index(drop=True)
@@ -236,7 +260,14 @@ for grp_vals, gdf in _df.groupby(group_cols):
         w_mm = float(row.iloc[0]["weight_mm"])
         w_yoy = float(row.iloc[0]["weight_yoy"])
 
-    out, debug_log = compute_group_forecast(gdf, date_col, value_col, horizon=int(horizon), w_mm=w_mm, w_yoy=w_yoy, debug=debug_mode)
+    out, debug_log = compute_group_forecast(
+        gdf, date_col, value_col,
+        horizon=int(horizon),
+        w_mm=w_mm, w_yoy=w_yoy,
+        yoy_periods=int(yoy_periods),
+        mm_periods=int(mm_periods),
+        debug=debug_mode
+    )
     if out.empty:
         continue
     for col, val in zip(group_cols, grp_vals):
@@ -266,13 +297,16 @@ st.subheader("Quick chart")
 if len(unique_groups) > 0:
     options = [tuple(r[group_cols].values) for _, r in unique_groups.iterrows()]
     sel = st.selectbox("Pick a group to visualize", options=options, format_func=lambda t: " | ".join(map(str, t)))
-    mask = np.ones(len(_df), dtype=bool)
+
+    mask = pd.Series(True, index=df.index)
     for col, val in zip(group_cols, sel):
-        mask &= (_df[col] == val).values
-    hist = _df.loc[mask, [date_col, value_col]].sort_values(date_col)
-    fmask = np.ones(len(fcst), dtype=bool)
+        mask &= (df[col] == val)
+    hist = df.loc[mask, [date_col, value_col]].sort_values(date_col)
+
+    fmask = pd.Series(True, index=fcst.index)
     for col, val in zip(group_cols, sel):
-        fmask &= (fcst[col] == val).values
+        fmask &= (fcst[col] == val)
+
     fut = fcst.loc[fmask, ["date", "baseline", "downside_-5pct", "upside_+5pct"]].sort_values("date")
 
     left, right = st.columns(2)
