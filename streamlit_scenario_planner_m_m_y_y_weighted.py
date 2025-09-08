@@ -1,20 +1,21 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from datetime import datetime
-from dateutil.relativedelta import relativedelta
+# from datetime import datetime
+# from dateutil.relativedelta import relativedelta
 
 st.set_page_config(page_title="Scenario Planner (m/m + y/y Weighted)", layout="wide")
 
-st.title("Scenario Planner — Weighted m/m & y/y (12‑month Forecast)")
+st.title("Forecasting Tool")
 st.write(
     """
-Upload a long-format dataset with a date column, one value column, and one or more dimension columns (plus an optional metric column). This app forecasts the next 12 months for each (dimension[, metric]) group using a weighted blend of:
+Upload a *long-format dataset* with a date column, one value column, and one or more dimension columns (plus an optional metric column).
 
-m/m seasonal factor: average of the last X years' month-to-month ratio for the same calendar transition.
+This app forecasts the next **N months** for each (dimension, metric) group using a weighted blend of:
 
-y/y momentum: average of the last Y months' year-over-year ratios (using actual + forecasted values), applied to the value from the same month one year prior.
+**m/m seasonal factor**: average of the last X years' month-to-month ratio for the same calendar transition.
 
+**y/y momentum**: average of the last Y months' year-over-year ratios (using actual + forecasted values), applied to the value from the same month one year prior.
 
 The baseline forecast is weight_mm * m/m_projection + weight_yoy * y/y_projection. Then we produce -5% and +5% scenarios around baseline.
 """
@@ -66,6 +67,10 @@ def seasonal_mm_avg(values_period: pd.Series, target_period: pd.Period, debug_lo
 def compute_group_forecast(group_df: pd.DataFrame, date_col: str, value_col: str, horizon: int, w_mm: float, w_yoy: float, yoy_periods: int, mm_periods: int, debug: bool=False):
     g = group_df[[date_col, value_col]].dropna().copy()
     g = g.sort_values(date_col)
+    
+    # Aggregation fix: Sum values for duplicate dates within the same group
+    # This prevents the ValueError by ensuring a unique index for reindexing.
+    g = g.groupby(date_col)[value_col].sum().reset_index()
 
     s = g.set_index(date_col)[value_col].copy()
     s.index = s.index.to_period('M')
@@ -83,7 +88,6 @@ def compute_group_forecast(group_df: pd.DataFrame, date_col: str, value_col: str
     for h in range(1, horizon + 1):
         t = last_actual + h
 
-        # Pass the new 'periods' arguments to the helper functions
         yoy_avg = last_yoy_avg(values, t - 1, debug_log, t, periods=yoy_periods)
         mm_ratio = seasonal_mm_avg(values, t, debug_log, periods=mm_periods)
 
@@ -132,6 +136,7 @@ def compute_group_forecast(group_df: pd.DataFrame, date_col: str, value_col: str
 # Sidebar — Inputs
 # =====================
 
+
 with st.sidebar:
     st.header("1) Upload your data")
     file = st.file_uploader("CSV or Excel (long format)", type=["csv", "xlsx", "xls"])
@@ -140,8 +145,8 @@ with st.sidebar:
         st.info("Upload a file to begin. A minimal example is shown below.")
         example = pd.DataFrame({
             "date": pd.date_range("2022-01-01", periods=48, freq="MS"),
-            "channel": np.random.choice(["CHANNEL A", "CHANNEL B", "CHANNEL C"], size=48),
-            "metric": "SALES",
+            "channel": np.random.choice(["channel A", "channel B", "channel C"], size=48),
+            "metric": "AGA",
             "value": np.random.randint(100, 1000, size=48)
         })
         st.dataframe(example.head(12))
@@ -179,7 +184,6 @@ with st.sidebar:
     default_w_yoy = 1.0 - default_w_mm
     st.write(f"Default weight — y/y: **{default_w_yoy:.2f}**")
 
-    # User inputs for forecast periods
     yoy_periods = st.number_input(
         "Number of months for y/y average",
         min_value=1,
