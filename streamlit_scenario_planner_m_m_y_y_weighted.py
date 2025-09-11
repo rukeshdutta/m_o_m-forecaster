@@ -21,6 +21,34 @@ The baseline forecast is weight_mm * m/m_projection + weight_yoy * y/y_projectio
 """
 )
 
+contact_box_text = """
+<style>
+    .footer {
+        position: fixed;
+        left: 0;
+        bottom: 0;
+        width: 100%;
+        background-color: #f9f9f9;
+        text-align: center;
+        padding: 12px;
+        font-size: 14px;
+        border-top: 1px solid #ddd;
+    }
+    .footer a {
+        text-decoration: none;
+        margin: 0 12px;
+    }
+</style>
+<div class="footer">
+    🔗 <a href="https://www.linkedin.com/in/rukesh-dutta/" target="_blank">Connect on LinkedIn</a> 
+    🔗 <a href="https://rukeshdutta.github.io/Rukesh-Portfolio/" target="_blank">View my other projects</a> 
+    📩 <a href="mailto:dutta_rukesh@gmail.com">Contact</a>
+</div>
+"""
+
+# Inject into Streamlit
+st.markdown(contact_box_text, unsafe_allow_html=True)
+
 # =====================
 # Helper Functions
 # =====================
@@ -146,7 +174,7 @@ with st.sidebar:
         example = pd.DataFrame({
             "date": pd.date_range("2022-01-01", periods=48, freq="MS"),
             "channel": np.random.choice(["channel A", "channel B", "channel C"], size=48),
-            "metric": "AGA",
+            "metric": "SALES",
             "value": np.random.randint(100, 1000, size=48)
         })
         st.dataframe(example.head(12))
@@ -327,4 +355,6 @@ if debug_mode and len(all_debug) > 0:
     if sel_debug in all_debug:
         st.text("\n".join(all_debug[sel_debug]))
 
-st.success("Done. Forecast now cascades predicted months in both m/m and y/y components, with debug logging available.")
+st.success("Done. Click Debug to see calculation steps.")
+
+st.markdown(contact_box_text, unsafe_allow_html=True)
