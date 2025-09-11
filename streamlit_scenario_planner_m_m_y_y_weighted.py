@@ -1,8 +1,8 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-# from datetime import datetime
-# from dateutil.relativedelta import relativedelta
+from datetime import datetime
+from dateutil.relativedelta import relativedelta
 
 st.set_page_config(page_title="Scenario Planner (m/m + y/y Weighted)", layout="wide")
 
@@ -163,7 +163,6 @@ def compute_group_forecast(group_df: pd.DataFrame, date_col: str, value_col: str
 # =====================
 # Sidebar — Inputs
 # =====================
-
 
 with st.sidebar:
     st.header("1) Upload your data")
